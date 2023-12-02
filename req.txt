@@ -1,0 +1,23 @@
+einops 
+pip install flash-attn --no-build-isolation
+transformers 
+huggingface-hub 
+accelerate 
+wandb
+pip3 install torch torchvision torchaudio
+pip3 install -U xformers --index-url https://download.pytorch.org/whl/cu121
+'git+https://github.com/Dao-AILab/flash-attention.git#egg=xentropy_cuda_lib&subdirectory=csrc/xentropy' 
+'git+https://github.com/HazyResearch/flash-attention.git#subdirectory=csrc/rotary'
+'git+https://github.com/Dao-AILab/flash-attention.git#egg=dropout_layer_norm&subdirectory=csrc/layer_norm'
+
+
+
+(. /etc/lsb-release && curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | env os=ubuntu dist="${DISTRIB_CODENAME}" bash)
+
+apt-get install git-lfs
+
+# Step 1 - SFT
+ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_configs/deepspeed_zero3.yaml scripts/run_sft.py recipes/zephyr-7b-beta/sft/config_full.yaml
+
+# Step 2 - DPO
+ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_configs/deepspeed_zero3.yaml scripts/run_dpo.py recipes/zephyr-7b-beta/dpo/config_full.yaml

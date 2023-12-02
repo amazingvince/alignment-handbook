@@ -24,7 +24,7 @@ import sys
 import datasets
 import torch
 import transformers
-from transformers import set_seed
+from transformers import set_seed, LlamaForCausalLM
 
 from accelerate import Accelerator
 from alignment import (
@@ -39,7 +39,7 @@ from alignment import (
     get_quantization_config,
     get_tokenizer,
 )
-from trl import SFTTrainer
+from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 
 
 logger = logging.getLogger(__name__)
@@ -90,51 +90,102 @@ def main():
     # Load tokenizer
     ################
     tokenizer = get_tokenizer(model_args, data_args)
+    tokenizer.add_special_tokens(
+        {
+            "additional_special_tokens": [
+                "<|assistant|>",
+                "<|user|>",
+                "<|system|>",
+                "<mathjson>",
+                "</mathjson>",
+            ]
+        }
+    )
 
     #####################
     # Apply chat template
     #####################
-    raw_datasets = raw_datasets.map(apply_chat_template, fn_kwargs={"tokenizer": tokenizer, "task": "sft"})
+    raw_datasets = raw_datasets.map(
+        apply_chat_template, fn_kwargs={"tokenizer": tokenizer, "task": "sft"}
+    )
+
+    instruction_template = "<|user|>"
+    response_template = "<|assistant|>"
+    collator = DataCollatorForCompletionOnlyLM(
+        instruction_template=instruction_template,
+        response_template=response_template,
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+
     train_dataset = raw_datasets["train"]
     eval_dataset = raw_datasets["test"]
 
-    with training_args.main_process_first(desc="Log a few random samples from the processed training set"):
+    with training_args.main_process_first(
+        desc="Log a few random samples from the processed training set"
+    ):
         for index in random.sample(range(len(raw_datasets["train"])), 3):
-            logger.info(f"Sample {index} of the processed training set:\n\n{raw_datasets['train'][index]['text']}")
+            logger.info(
+                f"Sample {index} of the processed training set:\n\n{raw_datasets['train'][index]['text']}"
+            )
 
     #######################
     # Load pretrained model
     #######################
     logger.info("*** Load pretrained model ***")
     torch_dtype = (
-        model_args.torch_dtype if model_args.torch_dtype in ["auto", None] else getattr(torch, model_args.torch_dtype)
+        model_args.torch_dtype
+        if model_args.torch_dtype in ["auto", None]
+        else getattr(torch, model_args.torch_dtype)
     )
 
     model_kwargs = dict(
         revision=model_args.model_revision,
         trust_remote_code=model_args.trust_remote_code,
-        use_flash_attention_2=model_args.use_flash_attention_2,
+        # use_flash_attention_2=model_args.use_flash_attention_2,
         torch_dtype=torch_dtype,
         use_cache=False if training_args.gradient_checkpointing else True,
         device_map=get_kbit_device_map(),
         quantization_config=get_quantization_config(model_args),
     )
+
+    model = LlamaForCausalLM.from_pretrained(
+        model_args.model_name_or_path, **model_kwargs
+    )
+
+    # Replace llama attn with flash attn
+    from axolotl.llama_attn_hijack_flash import (
+        replace_llama_mlp_with_swiglu,
+        replace_llama_qkv_with_fused,
+        replace_llama_attn_with_flash_attn,
+    )
+
+    replace_llama_attn_with_flash_attn(packed=False, cross_entropy=True, rms_norm=True)
+    replace_llama_mlp_with_swiglu(model)
+    replace_llama_qkv_with_fused(model)
+
+    # Resize token embeddings to match tokenizer
+    model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=128)
+
     logger.info("*** Model loaded! ***")
 
     ########################
     # Initialize the Trainer
     ########################
     trainer = SFTTrainer(
-        model=model_args.model_name_or_path,
-        model_init_kwargs=model_kwargs,
+        # model=model_args.model_name_or_path,
+        # model_init_kwargs=model_kwargs,
+        model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         dataset_text_field="text",
         max_seq_length=training_args.max_seq_length,
         tokenizer=tokenizer,
-        packing=True,
+        packing=False,
         peft_config=get_peft_config(model_args),
+        data_collator=collator,
+        neftune_noise_alpha=5,
     )
 
     ###############
@@ -143,7 +194,11 @@ def main():
     logger.info("*** Train ***")
     train_result = trainer.train()
     metrics = train_result.metrics
-    max_train_samples = data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+    max_train_samples = (
+        data_args.max_train_samples
+        if data_args.max_train_samples is not None
+        else len(train_dataset)
+    )
     metrics["train_samples"] = min(max_train_samples, len(train_dataset))
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
@@ -155,7 +210,11 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
-        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
+        max_eval_samples = (
+            data_args.max_eval_samples
+            if data_args.max_eval_samples is not None
+            else len(eval_dataset)
+        )
         metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
