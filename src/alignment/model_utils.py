@@ -55,21 +55,23 @@ def get_quantization_config(model_args) -> BitsAndBytesConfig | None:
     return quantization_config
 
 
-def get_tokenizer(model_args: ModelArguments, data_args: DataArguments) -> PreTrainedTokenizer:
+def get_tokenizer(
+    model_args: ModelArguments, data_args: DataArguments
+) -> PreTrainedTokenizer:
     """Get the tokenizer for the model."""
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         revision=model_args.model_revision,
     )
     if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer.pad_token_id = tokenizer.unk_token_id
 
     if data_args.truncation_side is not None:
         tokenizer.truncation_side = data_args.truncation_side
 
     # Set reasonable default for models without max length
     if tokenizer.model_max_length > 100_000:
-        tokenizer.model_max_length = 2048
+        tokenizer.model_max_length = 4096
 
     if data_args.chat_template is not None:
         tokenizer.chat_template = data_args.chat_template
@@ -103,4 +105,6 @@ def is_adapter_model(model_name_or_path: str, revision: str = "main") -> bool:
     except HFValidationError:
         # If not, check local repo
         repo_files = os.listdir(model_name_or_path)
-    return "adapter_model.safetensors" in repo_files or "adapter_model.bin" in repo_files
+    return (
+        "adapter_model.safetensors" in repo_files or "adapter_model.bin" in repo_files
+    )

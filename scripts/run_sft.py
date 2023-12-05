@@ -24,7 +24,7 @@ import sys
 import datasets
 import torch
 import transformers
-from transformers import set_seed, LlamaForCausalLM
+from transformers import set_seed, LlamaForCausalLM, MistralForCausalLM
 
 from accelerate import Accelerator
 from alignment import (
@@ -101,26 +101,48 @@ def main():
             ]
         }
     )
+    tokenizer.model_max_length = training_args.max_seq_length
 
     #####################
     # Apply chat template
     #####################
-    raw_datasets = raw_datasets.map(
+    def fix_role(json_data):
+        for item in json_data:
+            if item["role"] == "gpt":
+                item["role"] = "assistant"
+            if item["role"] == "human":
+                item["role"] = "user"
+        return json_data
+
+    raw_datasets = raw_datasets.map(fix_role).map(
         apply_chat_template, fn_kwargs={"tokenizer": tokenizer, "task": "sft"}
     )
 
-    instruction_template = "<|user|>"
-    response_template = "<|assistant|>"
+    train_dataset = raw_datasets["train"]
+    eval_dataset = raw_datasets["test"]
+
+    def formatting_prompts_func(example):
+        output_texts = []
+        for i in range(len(example["messages"])):
+            messages = fix_role(example["messages"][i])
+            if messages[0]["role"] != "system":
+                messages.insert(0, {"role": "system", "content": ""})
+            output_texts.append(
+                tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=False
+                )
+            )
+        return output_texts
+        # We add an empty system message if there is none
+
+    instruction_template = "\n<|user|>"
+    response_template = "\n<|assistant|>"
     collator = DataCollatorForCompletionOnlyLM(
         instruction_template=instruction_template,
         response_template=response_template,
         tokenizer=tokenizer,
         mlm=False,
     )
-
-    train_dataset = raw_datasets["train"]
-    eval_dataset = raw_datasets["test"]
-
     with training_args.main_process_first(
         desc="Log a few random samples from the processed training set"
     ):
@@ -142,29 +164,17 @@ def main():
     model_kwargs = dict(
         revision=model_args.model_revision,
         trust_remote_code=model_args.trust_remote_code,
-        # use_flash_attention_2=model_args.use_flash_attention_2,
+        use_flash_attention_2=model_args.use_flash_attention_2,
         torch_dtype=torch_dtype,
         use_cache=False if training_args.gradient_checkpointing else True,
         device_map=get_kbit_device_map(),
         quantization_config=get_quantization_config(model_args),
     )
 
-    model = LlamaForCausalLM.from_pretrained(
+    model = MistralForCausalLM.from_pretrained(
         model_args.model_name_or_path, **model_kwargs
     )
 
-    # Replace llama attn with flash attn
-    from axolotl.llama_attn_hijack_flash import (
-        replace_llama_mlp_with_swiglu,
-        replace_llama_qkv_with_fused,
-        replace_llama_attn_with_flash_attn,
-    )
-
-    replace_llama_attn_with_flash_attn(packed=False, cross_entropy=True, rms_norm=True)
-    replace_llama_mlp_with_swiglu(model)
-    replace_llama_qkv_with_fused(model)
-
-    # Resize token embeddings to match tokenizer
     model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=128)
 
     logger.info("*** Model loaded! ***")
@@ -179,7 +189,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        dataset_text_field="text",
+        formatting_func=formatting_prompts_func,
         max_seq_length=training_args.max_seq_length,
         tokenizer=tokenizer,
         packing=False,

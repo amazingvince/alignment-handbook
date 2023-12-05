@@ -26,7 +26,10 @@ DEFAULT_CHAT_TEMPLATE = "{% for message in messages %}\n{% if message['role'] ==
 
 
 def apply_chat_template(
-    example, tokenizer, task: Literal["sft", "generation", "rm", "dpo"] = "sft", assistant_prefix="<|assistant|>\n"
+    example,
+    tokenizer,
+    task: Literal["sft", "generation", "rm", "dpo"] = "sft",
+    assistant_prefix="<|assistant|>\n",
 ):
     def _strip_prefix(s, pattern):
         # Use re.escape to escape any special characters in the pattern
@@ -38,7 +41,9 @@ def apply_chat_template(
         if messages[0]["role"] != "system":
             messages.insert(0, {"role": "system", "content": ""})
         example["text"] = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True if task == "generation" else False
+            messages,
+            tokenize=False,
+            add_generation_prompt=True if task == "generation" else False,
         )
     elif task == "rm":
         if all(k in example.keys() for k in ("chosen", "rejected")):
@@ -49,8 +54,12 @@ def apply_chat_template(
                 chosen_messages.insert(0, {"role": "system", "content": ""})
             if rejected_messages[0]["role"] != "system":
                 rejected_messages.insert(0, {"role": "system", "content": ""})
-            example["text_chosen"] = tokenizer.apply_chat_template(chosen_messages, tokenize=False)
-            example["text_rejected"] = tokenizer.apply_chat_template(rejected_messages, tokenize=False)
+            example["text_chosen"] = tokenizer.apply_chat_template(
+                chosen_messages, tokenize=False
+            )
+            example["text_rejected"] = tokenizer.apply_chat_template(
+                rejected_messages, tokenize=False
+            )
         else:
             raise ValueError(
                 f"Could not format example as dialogue for `rm` task! Require `[chosen, rejected]` keys but found {list(example.keys())}"
@@ -58,7 +67,9 @@ def apply_chat_template(
     elif task == "dpo":
         if all(k in example.keys() for k in ("chosen", "rejected")):
             # Compared to reward modeling, we filter out the prompt, so the text is everything after the last assistant token
-            prompt_messages = [[msg for msg in example["chosen"] if msg["role"] == "user"][0]]
+            prompt_messages = [
+                [msg for msg in example["chosen"] if msg["role"] == "user"][0]
+            ]
             # Insert system message
             if example["chosen"][0]["role"] != "system":
                 prompt_messages.insert(0, {"role": "system", "content": ""})
@@ -67,13 +78,21 @@ def apply_chat_template(
             # TODO: handle case where chosen/rejected also have system messages
             chosen_messages = example["chosen"][1:]
             rejected_messages = example["rejected"][1:]
-            example["text_chosen"] = tokenizer.apply_chat_template(chosen_messages, tokenize=False)
-            example["text_rejected"] = tokenizer.apply_chat_template(rejected_messages, tokenize=False)
+            example["text_chosen"] = tokenizer.apply_chat_template(
+                chosen_messages, tokenize=False
+            )
+            example["text_rejected"] = tokenizer.apply_chat_template(
+                rejected_messages, tokenize=False
+            )
             example["text_prompt"] = tokenizer.apply_chat_template(
                 prompt_messages, tokenize=False, add_generation_prompt=True
             )
-            example["text_chosen"] = _strip_prefix(example["text_chosen"], assistant_prefix)
-            example["text_rejected"] = _strip_prefix(example["text_rejected"], assistant_prefix)
+            example["text_chosen"] = _strip_prefix(
+                example["text_chosen"], assistant_prefix
+            )
+            example["text_rejected"] = _strip_prefix(
+                example["text_rejected"], assistant_prefix
+            )
         else:
             raise ValueError(
                 f"Could not format example as dialogue for `dpo` task! Require `[chosen, rejected]` keys but found {list(example.keys())}"
@@ -127,7 +146,9 @@ def get_datasets(
     return raw_datasets
 
 
-def mix_datasets(dataset_mixer: dict, splits: Optional[List[str]] = None, shuffle=True) -> DatasetDict:
+def mix_datasets(
+    dataset_mixer: dict, splits: Optional[List[str]] = None, shuffle=True
+) -> DatasetDict:
     """
     Loads and mixes datasets according to proportions specified in `dataset_mixer`.
 
@@ -158,7 +179,9 @@ def mix_datasets(dataset_mixer: dict, splits: Optional[List[str]] = None, shuffl
             elif "test" in split:
                 raw_val_datasets.append(dataset)
             else:
-                raise ValueError(f"Split type {split} not recognized as one of test or train.")
+                raise ValueError(
+                    f"Split type {split} not recognized as one of test or train."
+                )
 
     if any(frac < 0 for frac in fracs):
         raise ValueError("Dataset fractions cannot be negative.")
@@ -175,7 +198,9 @@ def mix_datasets(dataset_mixer: dict, splits: Optional[List[str]] = None, shuffl
     # No subsampling for test datasets to enable fair comparison across models
     if len(raw_val_datasets) > 0:
         if shuffle:
-            raw_datasets["test"] = concatenate_datasets(raw_val_datasets).shuffle(seed=42)
+            raw_datasets["test"] = concatenate_datasets(raw_val_datasets).shuffle(
+                seed=42
+            )
         else:
             raw_datasets["test"] = concatenate_datasets(raw_val_datasets)
 
