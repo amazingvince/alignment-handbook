@@ -5,7 +5,18 @@ huggingface-hub
 accelerate 
 wandb
 pip3 install torch torchvision torchaudio
+
+
+DS_BUILD_FUSED_ADAM=1 pip install --force-reinstall deepspeed
+
+
+# cuda 11.8 version
+pip3 install -U xformers --index-url https://download.pytorch.org/whl/cu118
+# cuda 12.1 version
 pip3 install -U xformers --index-url https://download.pytorch.org/whl/cu121
+
+
+
 'git+https://github.com/Dao-AILab/flash-attention.git#egg=xentropy_cuda_lib&subdirectory=csrc/xentropy' 
 'git+https://github.com/HazyResearch/flash-attention.git#subdirectory=csrc/rotary'
 'git+https://github.com/Dao-AILab/flash-attention.git#egg=dropout_layer_norm&subdirectory=csrc/layer_norm'
@@ -21,3 +32,23 @@ ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_con
 
 # Step 2 - DPO
 ACCELERATE_LOG_LEVEL=info accelerate launch --config_file recipes/accelerate_configs/deepspeed_zero3.yaml scripts/run_dpo.py recipes/zephyr-7b-beta/dpo/config_full.yaml
+
+
+pip install git+https://github.com/huggingface/transformers.git
+pip install git+https://github.com/huggingface/trl.git
+pip install git+https://github.com/huggingface/accelerate.git
+
+
+export NCCL_IB_GID_INDEX=3
+
+
+git clone https://github.com/NVIDIA/apex
+cd apex
+# if pip >= 23.1 (ref: https://pip.pypa.io/en/stable/news/#v23-1) which supports multiple `--config-settings` with the same key... 
+pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" ./
+# otherwise
+pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+
+
+
+watch -n1.0 nvidia-smi
