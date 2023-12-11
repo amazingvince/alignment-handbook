@@ -44,6 +44,10 @@ from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 
 logger = logging.getLogger(__name__)
 
+import os
+os.environ["WANDB_PROJECT"] = "where-llambo"  # name your W&B project
+os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
+
 
 def main():
     parser = H4ArgumentParser((ModelArguments, DataArguments, SFTConfig))
@@ -101,6 +105,7 @@ def main():
             ]
         }
     )
+    tokenizer.pad_token_id = tokenizer.unk_token_id
     tokenizer.model_max_length = training_args.max_seq_length
 
     #####################
@@ -114,9 +119,9 @@ def main():
                 item["role"] = "user"
         return json_data
 
-    raw_datasets = raw_datasets.map(fix_role).map(
-        apply_chat_template, fn_kwargs={"tokenizer": tokenizer, "task": "sft"}
-    )
+    # raw_datasets = raw_datasets.map(fix_role).map(
+    #     apply_chat_template, fn_kwargs={"tokenizer": tokenizer, "task": "sft"}
+    # )
 
     train_dataset = raw_datasets["train"]
     eval_dataset = raw_datasets["test"]
